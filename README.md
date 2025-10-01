@@ -76,6 +76,13 @@ app/
 docker-compose.yml # Weaviate (>= 1.27.x) with gRPC exposed
 ```
 
+## Demo
+- View the demo screen recording:
+  - Markdown link: [assets/Screen Recording 2025-10-01 at 4.25.15 PM.mov](assets/Screen%20Recording%202025-10-01%20at%204.25.15%E2%80%AFPM.mov)
+  - If your browser doesn’t preview it on GitHub, download and open locally.
+
+<video src="assets/Screen%20Recording%202025-10-01%20at%204.25.15%E2%80%AFPM.mov" controls width="800"></video>
+
 ## Troubleshooting
 - Uvicorn not found: activate the virtualenv or use the full path `venv/bin/uvicorn`.
 - Weaviate version error: ensure Docker image is `>= 1.27.x` (compose uses a recent 1.27 tag) and port `8080` is free.
