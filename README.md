@@ -2,6 +2,10 @@
 
 A minimal Retrieval-Augmented Generation (RAG) service built with FastAPI, Weaviate (v4), and OpenAI. Upload a PDF, store chunk embeddings in Weaviate, and query with semantic search; the answer is generated with OpenAI.
 
+## What's New
+- Streaming answers (ChatGPT-style): new `GET /query_stream` endpoint streams tokens via SSE; the UI renders a typewriter-style answer.
+- Faster ingestion for large PDFs: larger overlapping chunks and batched OpenAI embedding requests significantly reduce processing time.
+
 ## Features
 - PDF upload, chunking, OpenAI embeddings, Weaviate storage (v4 Collections API)
 - Query endpoint that retrieves top-k chunks via vector search and asks OpenAI to answer
@@ -55,7 +59,9 @@ uvicorn app.main:app --reload --port 8000
 ## Using the App
 1. Open `http://127.0.0.1:8000/` in your browser.
 2. Upload a real PDF (not a renamed file). The app extracts text and stores vectorized chunks in Weaviate.
-3. Ask a question in the query box; the app retrieves the most relevant chunks and asks OpenAI to answer.
+3. Ask a question in the query box.
+   - The answer will now stream live (typewriter effect) as tokens arrive.
+   - If streaming is unavailable, it automatically falls back to the non‑streaming endpoint.
 
 Alternatively, using curl:
 
@@ -65,13 +71,17 @@ curl -F "file=@/path/to/your.pdf" http://127.0.0.1:8000/upload_pdf
 
 # Query
 curl -G "http://127.0.0.1:8000/query" --data-urlencode "q=What is this document about?"
+
+# Streamed query (Server-Sent Events)
+# Note: --no-buffer helps show events as they arrive; some shells/binaries auto-buffer
+curl --no-buffer -N -G "http://127.0.0.1:8000/query_stream" --data-urlencode "q=What is this document about?"
 ```
 
 ## Project Structure
 ```
 app/
   main.py       # FastAPI app, Weaviate v4 client, endpoints
-  index.html    # Simple UI for upload and query
+  index.html    # Simple UI for upload and query (now with streaming via EventSource)
 
 docker-compose.yml # Weaviate (>= 1.27.x) with gRPC exposed
 ```
@@ -89,6 +99,15 @@ If you want an inline preview in the README, convert a short clip to GIF and emb
 - gRPC/HTTP connectivity: compose exposes `8080` and `50051`. The client auto-derives security/ports from `WEAVIATE_URL`.
 - PDF parsing errors: the API returns a 400 if the file is empty, not a PDF, corrupted, or has no extractable text.
 - 405/404 from HTML: open the UI at `http://127.0.0.1:8000/` so requests hit the API origin. The UI also falls back to `http://127.0.0.1:8000` when opened from `file://`.
+
+### Streaming (SSE) specific
+- Open the UI at `http://127.0.0.1:8000/` (not `file://`) so `EventSource` can connect to the API origin.
+- Some proxies/load balancers buffer SSE. Disable response buffering for `text/event-stream` or access the API directly during development.
+- If your network blocks SSE, the UI will fall back to non‑streaming `/query` automatically.
+
+### Performance notes
+- Ingestion uses chunk size ~1500 characters with ~200 character overlap, and batches embedding requests in groups (default 64). This reduces the number of OpenAI round-trips for large PDFs.
+- You can adjust these parameters in `app/main.py` if you need different trade-offs between speed and recall.
 
 ## Notes on Weaviate v4 Migration
 - Uses `weaviate.connect_to_custom` and the Collections API.
