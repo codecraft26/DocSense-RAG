@@ -115,33 +115,68 @@
         }
       };
 
-      askBtn.onclick = async () => {
+      askBtn.onclick = () => {
         const q = document.getElementById('q').value.trim();
         if (!q) { askStatus.textContent = 'Enter a question.'; return; }
-        askBtn.disabled = true; askStatus.textContent = 'Querying…'; answerEl.textContent = '—'; contextEl.textContent = '—';
-        try {
-          const url = new URL('/query', getApiBase());
-          url.searchParams.set('q', q);
-          const resp = await fetch(url);
-          const parsed = await parseResponse(resp);
-          if (!parsed.ok) {
-            const detail = parsed.data?.detail || parsed.text || 'Query failed';
-            askStatus.textContent = `Error ${resp.status}: ${detail}`;
-          } else {
-            const data = parsed.data || {};
-            answerEl.textContent = data.answer || parsed.text || 'No answer';
-            if (Array.isArray(data.context)) {
-              contextEl.textContent = data.context.join('\n\n—\n\n') || 'No context returned';
-            } else {
-              contextEl.textContent = 'No context returned';
-            }
+        askBtn.disabled = true; askStatus.textContent = 'Streaming…'; answerEl.textContent = ''; contextEl.textContent = '—';
+
+        const url = new URL('/query_stream', getApiBase());
+        url.searchParams.set('q', q);
+
+        const es = new EventSource(url, { withCredentials: false });
+
+        es.onmessage = (ev) => {
+          if (!ev.data) return;
+          if (ev.data === '[DONE]') {
             askStatus.textContent = 'Done';
+            es.close();
+            askBtn.disabled = false;
+            return;
           }
-        } catch (e) {
-          askStatus.textContent = 'Query failed: ' + e;
-        } finally {
-          askBtn.disabled = false;
-        }
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'context' && Array.isArray(msg.chunks)) {
+              contextEl.textContent = msg.chunks.join('\n\n—\n\n') || 'No context returned';
+            } else if (msg.type === 'token' && typeof msg.content === 'string') {
+              // Append token for typewriter effect
+              answerEl.textContent += msg.content;
+            }
+          } catch (_) {
+            // Non-JSON data; append as raw text
+            answerEl.textContent += ev.data;
+          }
+        };
+
+        es.onerror = (e) => {
+          askStatus.textContent = 'Stream error. Falling back to non-streaming…';
+          es.close();
+          // Fallback: do a regular non-streaming request
+          ;(async () => {
+            try {
+              const fallback = new URL('/query', getApiBase());
+              fallback.searchParams.set('q', q);
+              const resp = await fetch(fallback);
+              const parsed = await parseResponse(resp);
+              if (!parsed.ok) {
+                const detail = parsed.data?.detail || parsed.text || 'Query failed';
+                askStatus.textContent = `Error ${resp.status}: ${detail}`;
+              } else {
+                const data = parsed.data || {};
+                answerEl.textContent = data.answer || parsed.text || 'No answer';
+                if (Array.isArray(data.context)) {
+                  contextEl.textContent = data.context.join('\n\n—\n\n') || 'No context returned';
+                } else {
+                  contextEl.textContent = 'No context returned';
+                }
+                askStatus.textContent = 'Done';
+              }
+            } catch (err) {
+              askStatus.textContent = 'Query failed: ' + err;
+            } finally {
+              askBtn.disabled = false;
+            }
+          })();
+        };
       };
     </script>
   </body>

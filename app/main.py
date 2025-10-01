@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, HTTPException, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from PyPDF2 import PdfReader
 import openai
@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from urllib.parse import urlparse
 from weaviate.classes.config import Property, DataType, Configure
 import io
+from typing import List
+import json
 
 # Load ENV
 load_dotenv()
@@ -92,21 +94,42 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not text.strip():
         raise HTTPException(status_code=400, detail="No extractable text in PDF")
 
-    # Chunk text
-    chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
+    # Chunk text with a larger window and small overlap to reduce API calls
+    def chunk_text(source_text: str, chunk_size: int = 1500, overlap: int = 200) -> List[str]:
+        if chunk_size <= 0:
+            return []
+        chunks_local: List[str] = []
+        start_index = 0
+        text_len = len(source_text)
+        while start_index < text_len:
+            end_index = min(start_index + chunk_size, text_len)
+            chunk = source_text[start_index:end_index]
+            chunks_local.append(chunk)
+            if end_index >= text_len:
+                break
+            start_index = end_index - overlap if overlap > 0 else end_index
+        return chunks_local
 
-    for chunk in chunks:
-        # Create embedding
+    chunks = chunk_text(text)
+
+    # Batch embeddings to drastically reduce round-trips
+    def batched(iterable: List[str], batch_size: int = 64) -> List[List[str]]:
+        return [iterable[i:i + batch_size] for i in range(0, len(iterable), batch_size)]
+
+    total_inserted = 0
+    for batch in batched(chunks):
+        # Create embeddings for a batch of chunks in a single API call
         resp = openai.embeddings.create(
             model="text-embedding-3-small",
-            input=chunk
+            input=batch
         )
-        vector = resp.data[0].embedding
+        # Insert each chunk with its corresponding embedding vector
+        for i, datum in enumerate(resp.data):
+            vector = datum.embedding
+            doc_collection.data.insert({"text": batch[i]}, vector=vector)
+            total_inserted += 1
 
-        # Store in Weaviate (v4 collections API)
-        doc_collection.data.insert({"text": chunk}, vector=vector)
-
-    return {"message": f"Stored {len(chunks)} chunks in Weaviate"}
+    return {"message": f"Stored {total_inserted} chunks in Weaviate"}
 
 @app.get("/query")
 async def query_rag(q: str):
@@ -131,3 +154,35 @@ async def query_rag(q: str):
         "answer": completion.choices[0].message.content,
         "context": retrieved_chunks
     }
+@app.get("/query_stream")
+def query_rag_stream(q: str):
+    def event_stream():
+        # Create query embedding
+        q_emb = openai.embeddings.create(
+            model="text-embedding-3-small",
+            input=q
+        ).data[0].embedding
+
+        # Search Weaviate
+        result = doc_collection.query.near_vector(q_emb, limit=3)
+        retrieved_chunks = [obj.properties["text"] for obj in result.objects]
+
+        # Send context first so UI can show it early
+        yield f"data: {json.dumps({'type':'context','chunks': retrieved_chunks})}\n\n"
+
+        # GPT streaming completion
+        prompt = f"Answer based on this context:\n{retrieved_chunks}\n\nQuestion: {q}"
+        stream = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+
+        for chunk in stream:
+            delta = getattr(chunk.choices[0].delta, 'content', None)
+            if delta:
+                yield f"data: {json.dumps({'type':'token','content': delta})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

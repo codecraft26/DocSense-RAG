@@ -77,11 +77,11 @@ docker-compose.yml # Weaviate (>= 1.27.x) with gRPC exposed
 ```
 
 ## Demo
-- View the demo screen recording:
-  - Markdown link: [assets/Screen Recording 2025-10-01 at 4.25.15 PM.mp4](assets/Screen%20Recording%202025-10-01%20at%204.25.15%20PM.mp4)
-  - If your browser doesn’t preview it on GitHub, download and open locally.
+GitHub markdown does not reliably play embedded videos inline. Use the direct link below (it will preview in the browser on GitHub, or download):
 
-<video src="assets/Screen%20Recording%202025-10-01%20at%204.25.15%20PM.mp4" controls width="800"></video>
+- Demo (MP4): [assets/Screen Recording 2025-10-01 at 4.25.15 PM.mp4](assets/Screen%20Recording%202025-10-01%20at%204.25.15%20PM.mp4?raw=1)
+
+If you want an inline preview in the README, convert a short clip to GIF and embed the GIF instead, e.g. `assets/demo.gif`.
 
 ## Troubleshooting
 - Uvicorn not found: activate the virtualenv or use the full path `venv/bin/uvicorn`.
