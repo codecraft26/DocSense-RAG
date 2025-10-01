@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RAG Demo</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
+      .card { max-width: 800px; margin: auto; padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 12px; }
+      h1 { margin-top: 0; }
+      label { display: block; font-weight: 600; margin: 0.75rem 0 0.25rem; }
+      input[type="file"], input[type="text"] { width: 100%; padding: 0.6rem; border: 1px solid #d1d5db; border-radius: 8px; }
+      button { margin-top: 0.75rem; padding: 0.6rem 1rem; background: #111827; color: white; border: none; border-radius: 8px; cursor: pointer; }
+      button[disabled] { opacity: 0.6; cursor: not-allowed; }
+      .row { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+      .status { margin-top: 0.5rem; font-size: 0.9rem; color: #6b7280; }
+      pre { white-space: pre-wrap; word-wrap: break-word; background: #f9fafb; padding: 1rem; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>RAG FastAPI Demo</h1>
+
+      <section>
+        <h2>Upload PDF</h2>
+        <div class="row">
+          <div>
+            <label for="pdf">PDF file</label>
+            <input id="pdf" type="file" accept="application/pdf" />
+            <button id="uploadBtn">Upload</button>
+            <div id="uploadStatus" class="status"></div>
+          </div>
+        </div>
+      </section>
+
+      <hr />
+
+      <section>
+        <h2>Ask a question</h2>
+        <div class="row">
+          <div>
+            <label for="q">Your question</label>
+            <input id="q" type="text" placeholder="What is this document about?" />
+            <button id="askBtn">Ask</button>
+            <div id="askStatus" class="status"></div>
+          </div>
+        </div>
+        <div style="margin-top: 1rem;">
+          <h3>Answer</h3>
+          <pre id="answer">—</pre>
+          <h3>Context</h3>
+          <pre id="context">—</pre>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      function getApiBase() {
+        // If already on the API origin (port 8000), use it. Otherwise, default to API at 8000.
+        try {
+          const url = new URL(window.location.href);
+          if (url.port === '8000') return url.origin;
+        } catch (_) {}
+        return 'http://127.0.0.1:8000';
+      }
+
+      const uploadBtn = document.getElementById('uploadBtn');
+      const uploadStatus = document.getElementById('uploadStatus');
+      const askBtn = document.getElementById('askBtn');
+      const askStatus = document.getElementById('askStatus');
+      const answerEl = document.getElementById('answer');
+      const contextEl = document.getElementById('context');
+
+      async function parseResponse(resp) {
+        const ct = resp.headers.get('content-type') || '';
+        // Handle empty bodies
+        const clone = resp.clone();
+        const text = await clone.text();
+        if (!text) return { ok: resp.ok, data: null, text: '' };
+        try {
+          if (ct.includes('application/json')) {
+            return { ok: resp.ok, data: JSON.parse(text), text };
+          }
+        } catch (_) {}
+        return { ok: resp.ok, data: null, text };
+      }
+
+      uploadBtn.onclick = async () => {
+        const fileInput = document.getElementById('pdf');
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) { uploadStatus.textContent = 'Please choose a PDF.'; return; }
+        if (file.type && file.type !== 'application/pdf') {
+          uploadStatus.textContent = `File type is '${file.type}', expected application/pdf`;
+          return;
+        }
+        const form = new FormData();
+        // Name must match parameter name in FastAPI endpoint
+        form.append('file', file, file.name || 'document.pdf');
+        uploadBtn.disabled = true; uploadStatus.textContent = 'Uploading…';
+        try {
+          const uploadUrl = new URL('/upload_pdf', getApiBase());
+          const resp = await fetch(uploadUrl, { method: 'POST', body: form });
+          const parsed = await parseResponse(resp);
+          if (parsed.ok) {
+            const msg = parsed.data?.message || parsed.text || 'Uploaded.';
+            uploadStatus.textContent = `Uploaded. ${msg}`;
+          } else {
+            const detail = parsed.data?.detail || parsed.text || 'Upload failed';
+            uploadStatus.textContent = `Error ${resp.status}: ${detail}`;
+          }
+        } catch (e) {
+          uploadStatus.textContent = 'Upload failed: ' + e;
+        } finally {
+          uploadBtn.disabled = false;
+        }
+      };
+
+      askBtn.onclick = async () => {
+        const q = document.getElementById('q').value.trim();
+        if (!q) { askStatus.textContent = 'Enter a question.'; return; }
+        askBtn.disabled = true; askStatus.textContent = 'Querying…'; answerEl.textContent = '—'; contextEl.textContent = '—';
+        try {
+          const url = new URL('/query', getApiBase());
+          url.searchParams.set('q', q);
+          const resp = await fetch(url);
+          const parsed = await parseResponse(resp);
+          if (!parsed.ok) {
+            const detail = parsed.data?.detail || parsed.text || 'Query failed';
+            askStatus.textContent = `Error ${resp.status}: ${detail}`;
+          } else {
+            const data = parsed.data || {};
+            answerEl.textContent = data.answer || parsed.text || 'No answer';
+            if (Array.isArray(data.context)) {
+              contextEl.textContent = data.context.join('\n\n—\n\n') || 'No context returned';
+            } else {
+              contextEl.textContent = 'No context returned';
+            }
+            askStatus.textContent = 'Done';
+          }
+        } catch (e) {
+          askStatus.textContent = 'Query failed: ' + e;
+        } finally {
+          askBtn.disabled = false;
+        }
+      };
+    </script>
+  </body>
+  </html>
+
+
